@@ -34,6 +34,7 @@ def assessment_pattern(reg: int, ass: int, dep: Optional[int] = None) -> Tuple[L
     """
     Returns (ms, co) lists for a given regulation and assessment.
     dep: 1 -> S&H, 2 -> Other (only for MODEL).
+    NOTE: ass == 6 (Custom) is handled separately via custom_ms/custom_co.
     """
     ms: List[int] = []
     co: List[int] = []
@@ -224,14 +225,24 @@ def generate_assessment_csv(
     ass: int,
     dep: Optional[int],
     ass_name: str,
+    custom_ms: Optional[List[int]] = None,
+    custom_co: Optional[List[int]] = None,
 ) -> Tuple[bytes, str]:
     """
     Main engine for UI:
-    - builds assessment pattern
+    - builds assessment pattern (or uses custom)
     - splits totals into question-wise marks
     - prepares CSV as bytes
     """
-    ms, co = assessment_pattern(reg, ass, dep)
+    if ass == 6:
+        if not custom_ms or not custom_co:
+            raise ValueError("Custom ms/co not provided for Custom assessment.")
+        if len(custom_ms) != len(custom_co):
+            raise ValueError("Custom ms and co length mismatch.")
+        ms, co = custom_ms, custom_co
+    else:
+        ms, co = assessment_pattern(reg, ass, dep)
+
     qno = [i + 1 for i in range(len(ms))]
 
     all_splits: List[List[int]] = []
@@ -243,7 +254,7 @@ def generate_assessment_csv(
     buffer = io.StringIO()
     writer = csv.writer(buffer)
 
-    writer.writerow(["KGiSL INSTITUTE of Technology"])
+    writer.writerow(["AI Spliiter By Sathish Ramanujam"])
     writer.writerow([f"Assessment Name : {ass_name}"])
 
     co1spup = [sum(ms[v] for v in range(len(ms)) if co[v] == 1)]
@@ -303,7 +314,7 @@ st.set_page_config(
 )
 
 st.title("CO Split-Up Generator")
-st.caption("Powered by Python • Designed by Prof. Sathish, KiTE")
+st.caption(" Designed by [Sathish Ramanujam](https://professor-sathish.github.io/) - Powered by IPS Tech Community ")
 
 st.markdown("---")
 
@@ -325,6 +336,7 @@ with col2:
         "MODEL": 3,
         "Lab": 4,
         "Project": 5,
+        "Custom": 6,
     }
     ass_label = st.selectbox(
         "Assessment Type",
@@ -334,9 +346,38 @@ with col2:
     ass = ass_label_to_value[ass_label]
 
 dep = None
+custom_ms: Optional[List[int]] = None
+custom_co: Optional[List[int]] = None
+
 if ass == 3:
     dep_label = st.radio("Department (for MODEL exam)", ["S & H", "Other"], horizontal=True)
     dep = 1 if dep_label == "S & H" else 2
+
+# Custom assessment configuration
+if ass == 6:
+    st.markdown("### Custom Assessment Configuration")
+    q_count = st.number_input("Number of Questions", min_value=1, max_value=100, value=5, step=1)
+    co_text = st.text_input(
+        "CO number for each question (comma-separated)",
+        value=",".join(str(i + 1) for i in range(min(q_count, 5))),
+        help="Example for 5 questions: 1,2,3,4,5",
+    )
+    ms_text = st.text_input(
+        "Max marks for each question (comma-separated)",
+        value=",".join(["2"] * min(q_count, 5)),
+        help="Example for 5 questions: 2,2,2,2,2",
+    )
+
+    try:
+        co_list = [int(x.strip()) for x in co_text.split(",") if x.strip() != ""]
+        ms_list = [int(x.strip()) for x in ms_text.split(",") if x.strip() != ""]
+        if len(co_list) != q_count or len(ms_list) != q_count:
+            st.warning(f"Please provide exactly {q_count} CO numbers and {q_count} max marks.")
+        else:
+            custom_co = co_list
+            custom_ms = ms_list
+    except ValueError:
+        st.warning("CO numbers and max marks must be integers separated by commas.")
 
 ass_name = st.text_input(
     "Output filename (without .csv)",
@@ -353,6 +394,8 @@ if generate_btn:
         st.error("Please upload a CSV file with marks.")
     elif not ass_name.strip():
         st.error("Please enter a valid output filename.")
+    elif ass == 6 and (custom_ms is None or custom_co is None):
+        st.error("Please provide valid custom CO numbers and max marks.")
     else:
         try:
             marks = get_marks_from_file(uploaded_file)
@@ -365,6 +408,8 @@ if generate_btn:
                     ass=ass,
                     dep=dep,
                     ass_name=ass_name.strip(),
+                    custom_ms=custom_ms,
+                    custom_co=custom_co,
                 )
 
                 st.success(
